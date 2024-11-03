@@ -1,10 +1,7 @@
 import traverse from '@babel/traverse';
 import type * as m from '@codemod/matchers';
-import { posix } from 'node:path';
+import { dirname, join, normalize, sep } from 'node:path';
 import type { Module } from './module';
-
-// eslint-disable-next-line @typescript-eslint/unbound-method
-const { dirname, join, normalize } = posix;
 
 export class Bundle {
   type: 'webpack' | 'browserify';
@@ -78,7 +75,7 @@ export class Bundle {
     await Promise.all(
       Array.from(this.modules.values(), async (module) => {
         const modulePath = normalize(join(path, module.path));
-        if (!modulePath.startsWith(path)) {
+        if (!modulePath.startsWith(path + sep)) {
           throw new Error(`detected path traversal: ${module.path}`);
         }
         await mkdir(dirname(modulePath), { recursive: true });

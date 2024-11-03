@@ -59,14 +59,33 @@ test('rearrange from for-in', () =>
     for (let key in object) {}
   `));
 
-test('rearrange from for loop init', () =>
+test('rearrange from for-of', () =>
+  expectJS(`
+    for (let value of (a = 1, array)) {}
+  `).toMatchInlineSnapshot(`
+    a = 1;
+    for (let value of array) {}
+  `));
+
+test('rearrange from for loop init', () => {
   expectJS(`
     for((a(), b());;);
   `).toMatchInlineSnapshot(`
     a();
     b();
     for (;;);
-  `));
+  `);
+
+  expectJS(`
+    if (1) for ((a(), b());;) {}
+  `).toMatchInlineSnapshot(`
+    if (1) {
+      a();
+      b();
+      for (;;) {}
+    }
+  `);
+});
 
 test('rearrange from for loop update', () =>
   expectJS(`
@@ -78,54 +97,96 @@ test('rearrange from for loop update', () =>
     }
   `));
 
-test('rearrange from while', () =>
+test('dont rearrange from while', () =>
   expectJS(`
     while (a(), b()) c();
   `).toMatchInlineSnapshot(`
-    a();
-    while (b()) c();
+    while (a(), b()) c();
   `));
 
-test('rearrange variable declarator', () =>
+test('dont rearrange from do-while', () =>
   expectJS(`
-   var t = (o = null, o);
+    do {} while (a(), b());
   `).toMatchInlineSnapshot(`
-    o = null;
-    var t = o;
+    do {} while (a(), b());
   `));
+
+test('rearrange variable declarator', () => {
+  expectJS(`
+    var a = (b(), c());
+  `).toMatchInlineSnapshot(`
+    b();
+    var a = c();
+  `);
+
+  expectJS(`
+    for (let a = (b(), c());;) {}
+  `).toMatchInlineSnapshot(`
+    b();
+    for (let a = c();;) {}
+  `);
+});
 
 test('rearrange assignment', () => {
   expectJS(`
-    t = (o = null, o);
+    a = (b(), c());
   `).toMatchInlineSnapshot(`
-    o = null;
-    t = o;
+    b();
+    a = c();
   `);
 
   expectJS(`
-    a ||= (b, c);
-    a &&= (b, c);
-    a ??= (b, c);
+    a.x = (b(), c());
   `).toMatchInlineSnapshot(`
-    a ||= (b, c);
-    a &&= (b, c);
-    a ??= (b, c);
+    b();
+    a.x = c();
   `);
 
   expectJS(`
-    for (;;) a = (b, c);
+    a[1] = (b(), c());
+  `).toMatchInlineSnapshot(`
+    b();
+    a[1] = c();
+  `);
+
+  expectJS(`
+    a[x()] = (b(), c());
+  `).toMatchInlineSnapshot(`a[x()] = (b(), c());`);
+
+  expectJS(`
+    console.log(a = (b(), c()));
+  `).toMatchInlineSnapshot(`
+    console.log((b(), a = c()));
+  `);
+
+  expectJS(`
+    while (a = (b(), c()));
+  `).toMatchInlineSnapshot(`
+    while (b(), a = c());
+  `);
+
+  expectJS(`
+    a ||= (b(), c());
+    a &&= (b(), c());
+    a ??= (b(), c());
+  `).toMatchInlineSnapshot(`
+    a ||= (b(), c());
+    a &&= (b(), c());
+    a ??= (b(), c());
+  `);
+
+  expectJS(`
+    for (;;) a = (b(), c());
   `).toMatchInlineSnapshot(`
     for (;;) {
-      b;
-      a = c;
+      b();
+      a = c();
     }
   `);
 });
 
-test('dont rearrange variable declarator in for loop', () =>
+// appears in some obfuscator.io forks
+test('simplify computed property with only literals', () =>
   expectJS(`
-    for(let a = (b, c);;) {}
-  `).toMatchInlineSnapshot(`
-    b;
-    for (let a = c;;) {}
-  `));
+    Lr[("nnQB", "jcIgN")]();
+  `).toMatchInlineSnapshot('Lr["jcIgN"]();'));

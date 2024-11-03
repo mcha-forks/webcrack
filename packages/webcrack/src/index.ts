@@ -17,6 +17,7 @@ import deobfuscate, {
   createNodeSandbox,
 } from './deobfuscate';
 import debugProtection from './deobfuscate/debug-protection';
+import evaluateGlobals from './deobfuscate/evaluate-globals';
 import mergeObjectAssignments from './deobfuscate/merge-object-assignments';
 import selfDefending from './deobfuscate/self-defending';
 import varFunctions from './deobfuscate/var-functions';
@@ -42,7 +43,7 @@ export interface WebcrackResult {
   code: string;
   bundle: Bundle | undefined;
   /**
-   * Save the deobufscated code and the extracted bundle to the given directory.
+   * Save the deobfuscated code and the extracted bundle to the given directory.
    * @param path Output directory
    */
   save(path: string): Promise<void>;
@@ -73,7 +74,7 @@ export interface Options {
    * Mangle variable names.
    * @default false
    */
-  mangle?: boolean;
+  mangle?: boolean | ((id: string) => boolean);
   /**
    * Assigns paths to modules based on the given matchers.
    * This will also rewrite `require()` calls to use the new paths.
@@ -124,7 +125,11 @@ export async function webcrack(
 
   const isBookmarklet = /^javascript:./.test(code);
   if (isBookmarklet) {
-    code = decodeURIComponent(code.replace(/^javascript:/, ''));
+    code = code
+      .replace(/^javascript:/, '')
+      .split(/%(?![a-f\d]{2})/i)
+      .map(decodeURIComponent)
+      .join('%');
   }
 
   let ast: ParseResult<t.File> = null!;
@@ -133,14 +138,18 @@ export async function webcrack(
 
   const stages = [
     () => {
-      return (ast = parse(code, {
+      ast = parse(code, {
         sourceType: 'unambiguous',
         allowReturnOutsideFunction: true,
+        errorRecovery: true,
         plugins: ['jsx'],
-      }));
+      });
+      if (ast.errors.length) {
+        debug('webcrack:parse')('Errors', ast.errors);
+      }
     },
     () => {
-      return applyTransforms(
+      applyTransforms(
         ast,
         [blockStatements, sequence, splitVariableDeclarations, varFunctions],
         { name: 'prepare' },
@@ -152,14 +161,30 @@ export async function webcrack(
       (() => {
         applyTransforms(ast, [transpile, unminify]);
       }),
-    options.mangle && (() => applyTransform(ast, mangle)),
-    // TODO: Also merge unminify visitor (breaks selfDefending/debugProtection atm)
-    options.deobfuscate &&
+    options.mangle &&
       (() =>
-        applyTransforms(ast, [selfDefending, debugProtection], {
-          noScope: true,
-        })),
-    options.deobfuscate && (() => applyTransform(ast, mergeObjectAssignments)),
+        applyTransform(
+          ast,
+          mangle,
+          typeof options.mangle === 'boolean' ? () => true : options.mangle,
+        )),
+    // TODO: Also merge unminify visitor (breaks selfDefending/debugProtection atm)
+    (options.deobfuscate || options.jsx) &&
+      (() => {
+        applyTransforms(
+          ast,
+          [
+            // Have to run this after unminify to properly detect it
+            options.deobfuscate ? [selfDefending, debugProtection] : [],
+            options.jsx ? [jsx, jsxNew] : [],
+          ].flat(),
+        );
+      }),
+    options.deobfuscate &&
+      (() => applyTransforms(ast, [mergeObjectAssignments, evaluateGlobals])),
+    () => (outputCode = generate(ast)),
+    // Unpacking modifies the same AST and may result in imports not at top level
+    // so the code has to be generated before
     options.unpack && (() => (bundle = unpackAST(ast, options.mappings(m)))),
     options.jsx && (() => applyTransforms(ast, [jsx, jsxNew])),
     () => (outputCode = generate(ast)),
